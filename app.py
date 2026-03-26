@@ -1,150 +1,122 @@
 import streamlit as st
 import pandas as pd
-import cv2
-import numpy as np
-import qrcode
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime
 import time
-from io import BytesIO
 
-# --- 1. CONFIGURATION (VERIFIE TES GID SUR GOOGLE SHEETS) ---
+# --- 1. CONFIGURATION DES SOURCES ---
 ID_SHEET = "1ROnvyK-h9I8mzAsfGjSRiQz8HLf5MppGVMCMt_vpiuM"
-GID_ELEVES = "0" 
-# Remplace les chiffres ci-dessous par ceux de ton navigateur (ex: gid=12345)
-GID_PRESENCES = "1157441981" 
-GID_RESULTATS = "408627258"
+# Onglet 'Eleves' (gid=0)
+URL_ELEVES = f"https://docs.google.com/spreadsheets/d/{ID_SHEET}/export?format=csv&gid=0"
 
-URL_BASE = f"https://docs.google.com/spreadsheets/d/{ID_SHEET}/export?format=csv"
-URL_ELEVES = f"{URL_BASE}&gid={GID_ELEVES}"
+st.set_page_config(page_title="EduTracer UPL", layout="wide", page_icon="🎓")
 
-st.set_page_config(page_title="EduTracer UPL 2026", page_icon="🎓", layout="wide")
+# --- 2. STOCKAGE TEMPORAIRE DES ACTIONS (SESSION) ---
+if 'histo_presences' not in st.session_state:
+    st.session_state.histo_presences = []
+if 'histo_resultats' not in st.session_state:
+    st.session_state.histo_resultats = []
 
-# --- 2. STYLE VISUEL (POUR EVITER L'ECRAN NOIR) ---
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 8px; background-color: #007bff; color: white; font-weight: bold; }
-    .stDataFrame { background-color: white; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 3. FONCTION EMAIL (AVEC TON NOUVEAU CODE : ncjzdgdxnplcptjj) ---
-def envoyer_notification(email_dest, sujet, corps):
+# --- 3. FONCTION ENVOI EMAIL (Code: ncjzdgdxnplcptjj) ---
+def envoyer_mail(email_dest, sujet, corps):
     try:
         msg = EmailMessage()
         msg.set_content(corps)
         msg['Subject'] = sujet
         msg['From'] = "julienbanze.k@gmail.com"
         msg['To'] = email_dest
-        
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            # Utilisation du nouveau code généré aujourd'hui
             smtp.login("julienbanze.k@gmail.com", "ncjzdgdxnplcptjj") 
             smtp.send_message(msg)
-        return True, "Envoyé"
-    except Exception as e:
-        return False, str(e)
+        return True
+    except: return False
 
-# --- 4. CHARGEMENT SECURISE DES DONNEES ---
-@st.cache_data(ttl=60)
-def charger_donnees(url):
+# --- 4. CHARGEMENT DYNAMIQUE ---
+@st.cache_data(ttl=5)
+def charger_data():
     try:
-        data = pd.read_csv(url)
+        data = pd.read_csv(URL_ELEVES)
         data.columns = data.columns.str.strip()
-        # Création de l'identité selon tes titres exacts
-        data['Identite'] = data['Nom_Eleve'].fillna('') + " " + data['Postnom_Eleve'].fillna('') + " " + data['Prenom_Eleve'].fillna('')
+        data['Identite'] = data['Nom_Eleve'].astype(str) + " " + data['Postnom_Eleve'].astype(str) + " " + data['Prenom_Eleve'].astype(str)
         return data
-    except Exception as e:
-        st.error(f"Erreur de connexion Google Sheets : {e}")
-        return None
+    except: return None
 
-df_eleves = charger_donnees(URL_ELEVES)
+df_base = charger_data()
 
-# --- 5. NAVIGATION ADMIN ---
-params = st.query_params
-mode_admin = params.get("admin") == "upl"
+# --- 5. INTERFACE ---
+st.sidebar.title("💎 EDU-TRACER UPL")
+menu = st.sidebar.radio("Navigation :", ["📍 Pointage Présence", "📊 Onglet Présences", "📝 Onglet Résultats", "👥 Base Élèves"])
 
-if mode_admin:
-    st.sidebar.title("🛠️ PANEL ADMIN UPL")
-    menu = st.sidebar.selectbox("MENU :", ["Pointage Élèves", "Générer Cartes QR", "Tableau de Bord", "Calcul Bulletin"])
-else:
-    menu = "Pointage Élèves"
-
-# --- 6. LOGIQUE DES PAGES ---
-
-if df_eleves is None or df_eleves.empty:
-    st.warning("⚠️ Chargement des données... Vérifiez le partage du fichier Google Sheets.")
+if df_base is None:
+    st.error("Impossible de charger le fichier Google Sheets. Vérifiez le lien.")
 else:
     # --- PAGE : POINTAGE ---
-    if menu == "Pointage Élèves":
-        st.title("🚀 Système de Présence & Alertes")
-        
-        col1, col2 = st.columns([1.5, 1])
-        
-        with col1:
-            methode = st.radio("Méthode :", ["👤 Présence (Visage)", "💳 Carte Élève (QR)"], horizontal=True)
-            photo = st.camera_input("Scanner l'étudiant")
-            
-        with col2:
-            st.subheader("Validation")
-            mat_input = st.text_input("🔢 Saisir le Matricule :", placeholder="Ex: 2025...")
-            
-            if st.button("VALIDER L'ARRIVÉE"):
-                res = df_eleves[df_eleves['Matricule'].astype(str) == str(mat_input)]
+    if menu == "📍 Pointage Présence":
+        st.title("📸 Identification & Alerte Parent")
+        c1, c2 = st.columns([1.5, 1])
+        with c1:
+            st.camera_input("Scanner le visage")
+        with c2:
+            mat = st.text_input("Matricule :")
+            if st.button("VALIDER L'ENTRÉE", use_container_width=True):
+                res = df_base[df_base['Matricule'].astype(str) == str(mat)]
                 if not res.empty:
-                    eleve = res.iloc[0]
-                    with st.spinner('Envoi de l\'alerte au parent...'):
-                        heure = datetime.now().strftime("%H:%M")
-                        txt = f"UPL : L'étudiant {eleve['Identite']} est arrivé à l'université à {heure}."
-                        ok, err = envoyer_notification(eleve['Email_Parent'], "🔔 Alerte Présence", txt)
-                        
-                        if ok:
-                            st.success(f"✅ BIENVENU(E) {eleve['Identite']}")
-                            st.info(f"📧 Notification envoyée à : {eleve['Email_Parent']}")
-                            time.sleep(3)
-                            st.rerun()
-                        else:
-                            st.error(f"❌ Erreur Email : {err}")
-                else:
-                    st.error("⚠️ Matricule inconnu dans la base de données.")
+                    el = res.iloc[0]
+                    now = datetime.now()
+                    # Archivage Présence
+                    st.session_state.histo_presences.append({
+                        "Matricule": mat, "Nom_Eleve": el['Nom_Eleve'], "PostNom_Eleve": el['Postnom_Eleve'],
+                        "Prenom_Eleve": el['Prenom_Eleve'], "Date": now.strftime("%d/%m/%Y"),
+                        "Heure": now.strftime("%H:%M"), "Statut": "Présent"
+                    })
+                    # Email
+                    envoyer_mail(el['Email_Parent'], "🔔 Présence UPL", f"{el['Identite']} est arrivé à l'UPL à {now.strftime('%H:%M')}.")
+                    st.success(f"✅ BIENVENU {el['Identite']}")
+                    time.sleep(2)
+                    st.rerun()
 
-    # --- PAGE : GENERER CARTES ---
-    elif menu == "Générer Cartes QR":
-        st.title("🪪 Générateur de Cartes QR")
-        sel = st.selectbox("Choisir l'élève :", df_eleves['Identite'].tolist())
-        row = df_eleves[df_eleves['Identite'] == sel].iloc[0]
+    # --- PAGE : ONGLET PRÉSENCES ---
+    elif menu == "📊 Onglet Présences":
+        st.title("📝 Registre Journalier")
+        if st.session_state.histo_presences:
+            st.table(pd.DataFrame(st.session_state.histo_presences))
+        else: st.info("Aucune présence aujourd'hui.")
+
+    # --- PAGE : ONGLET RÉSULTATS (DYNAMIQUE) ---
+    elif menu == "📝 Onglet Résultats":
+        st.title("📊 Calculateur de Bulletin")
+        eleve_sel = st.selectbox("Sélectionner l'étudiant :", df_base['Identite'].tolist())
+        info_el = df_base[df_base['Identite'] == eleve_sel].iloc[0]
         
-        qr = qrcode.make(str(row['Matricule']))
-        st.image(qr.get_image(), width=200, caption=f"QR de {row['Matricule']}")
-        st.info(f"**Identité :** {row['Identite']}\n\n**Matricule :** {row['Matricule']}")
-
-    # --- PAGE : TABLEAU DE BORD (FIXÉ) ---
-    elif menu == "Tableau de Bord":
-        st.title("📋 Base de Données Étudiants")
-        st.write(f"Nombre d'élèves enregistrés : {len(df_eleves)}")
-        # Utilisation de st.dataframe pour un affichage propre et blanc
-        st.dataframe(df_eleves[['Matricule', 'Nom_Eleve', 'Postnom_Eleve', 'Prenom_Eleve', 'Classe', 'Email_Parent']], use_container_width=True)
-
-    # --- PAGE : CALCUL BULLETIN (FIXÉ) ---
-    elif menu == "Calcul Bulletin":
-        st.title("📊 Calculateur de Résultats Automatique")
-        sel_b = st.selectbox("Élève pour le bulletin :", df_eleves['Identite'].tolist())
-        info_b = df_eleves[df_eleves['Identite'] == sel_b].iloc[0]
-        
-        with st.form("form_res"):
-            c1, c2 = st.columns(2)
-            m = c1.number_input("Mathématiques /20", 0, 20, 10)
-            c = c2.number_input("Autre Cours /20", 0, 20, 10)
-            cond = c1.number_input("Conduite /10", 0, 10, 5)
+        with st.form("form_notes"):
+            col_a, col_b = st.columns(2)
+            math = col_a.number_input("Math /20", 0, 20, 10)
+            cours = col_b.number_input("Cours /20", 0, 20, 10)
+            cote = col_a.number_input("Cote /10", 0, 10, 5)
             
-            if st.form_submit_button("CALCULER & ENVOYER"):
-                total = m + c + cond
+            if st.form_submit_button("CALCULER & ENREGISTRER"):
+                total = math + cours + cote
                 pourcent = (total / 50) * 100
-                st.metric("RÉSULTAT", f"{pourcent}%", f"{total}/50")
                 
-                corps = f"Résultats UPL de {sel_b} :\nTotal: {total}/50\nPourcentage: {pourcent}%"
-                ok, err = envoyer_notification(info_b['Email_Parent'], "📊 Bulletin Numérique", corps)
-                if ok: st.success("✅ Bulletin envoyé au parent !")
-                else: st.error(f"❌ Erreur : {err}")
+                # Archivage Résultat avec TES colonnes
+                st.session_state.histo_resultats.append({
+                    "Matricule": info_el['Matricule'], "Nom_Eleve": info_el['Nom_Eleve'],
+                    "PostNom_Eleve": info_el['Postnom_Eleve'], "Prenom_Eleve": info_el['Prenom_Eleve'],
+                    "Math": math, "Cours": cours, "Cote": cote, "Total": total, "Pourcentage": f"{pourcent}%"
+                })
+                
+                # Email Parent
+                corps_res = f"Résultats de {eleve_sel} :\nTotal: {total}/50\nPourcentage: {pourcent}%"
+                envoyer_mail(info_el['Email_Parent'], "📊 Bulletin Numérique", corps_res)
+                st.success(f"Bulletin de {eleve_sel} envoyé au parent !")
+
+        if st.session_state.histo_resultats:
+            st.divider()
+            st.subheader("Tableau des Résultats Générés")
+            st.dataframe(pd.DataFrame(st.session_state.histo_resultats))
+
+    # --- PAGE : BASE ÉLÈVES ---
+    elif menu == "👥 Base Élèves":
+        st.title("📑 Liste des Inscrits")
+        st.dataframe(df_base[['Matricule', 'Nom_Eleve', 'Postnom_Eleve', 'Prenom_Eleve', 'Classe', 'Email_Parent']], use_container_width=True)
