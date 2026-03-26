@@ -5,168 +5,180 @@ import os
 import time
 
 # --- CONFIGURATION LUBUMBASHI (UTC+2) ---
-st.set_page_config(page_title="EduTracer UPL - Biométrie Mobile", layout="wide", page_icon="📱")
+st.set_page_config(page_title="EduTracer UPL - Format Google Sheets", layout="wide", page_icon="☝️")
 
 def get_upl_time():
+    """Récupère l'heure exacte de Lubumbashi"""
     return datetime.utcnow() + timedelta(hours=2)
 
 # --- INITIALISATION DES BASES DE DONNÉES ---
-DB_E = "base_etudiants.csv"
-DB_P = "registre_empreintes.csv"
+DB_E = "base_etudiants.csv"        # Liste des élèves inscrits
+DB_P = "registre_presences.csv"     # Historique des pointages
+DB_B = "liaison_biometrique.csv"    # Table Matricule <-> Empreinte
 
 def init_db():
+    # Création des fichiers avec les noms de colonnes formatés pour Google Sheets (_Eleve)
     if not os.path.exists(DB_E):
-        pd.DataFrame([
-            {"Matricule": "2025001", "Nom": "BANZE", "Postnom": "KANDOLO", "Prenom": "Julien", "Classe": "Bac 1 IA"},
-            {"Matricule": "2025002", "Nom": "KABAMBA", "Postnom": "ILUNGA", "Prenom": "Marc", "Classe": "Bac 1 IA"}
-        ]).to_csv(DB_E, index=False)
+        pd.DataFrame(columns=["Matricule", "Nom_Eleve", "Postnom_Eleve", "Prenom_Eleve", "Classe"]).to_csv(DB_E, index=False)
+    
     if not os.path.exists(DB_P):
-        pd.DataFrame(columns=["Matricule", "Date", "Pointage_1", "Pointage_2", "Statut"]).to_csv(DB_P, index=False)
+        pd.DataFrame(columns=["Matricule", "Identite_Complete", "Date", "Entree", "Sortie", "Statut"]).to_csv(DB_P, index=False)
+    
+    if not os.path.exists(DB_B):
+        pd.DataFrame(columns=["Matricule", "Finger_ID"]).to_csv(DB_B, index=False)
 
 init_db()
 
-# --- DESIGN INDUSTRIEL DARK & MOBILE FRIENDLY ---
+# --- DESIGN ET STYLE ---
 st.markdown("""
     <style>
     .stApp { background-color: #0D1117; color: #C9D1D9; }
     .stButton>button { 
         background: linear-gradient(90deg, #238636 0%, #2ea043 100%); 
-        color: white; border: none; border-radius: 12px; 
-        width: 100%; font-weight: bold; height: 3.5em;
-        transition: 0.3s;
+        color: white; border-radius: 12px; font-weight: bold; height: 3.5em; width: 100%;
     }
-    .stButton>button:hover { transform: scale(1.02); box-shadow: 0 4px 15px rgba(46, 160, 67, 0.4); }
-    .metric-card { 
+    .card { 
         background: #161B22; border: 1px solid #30363D; 
-        padding: 20px; border-radius: 15px; text-align: center;
-    }
-    .fingerprint-anim {
-        text-align: center; padding: 20px; border: 2px dashed #58A6FF;
-        border-radius: 50%; width: 150px; height: 150px; margin: auto;
+        padding: 25px; border-radius: 15px; text-align: center;
     }
     h1, h2, h3 { color: #58A6FF !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- NAVIGATION ---
-st.sidebar.markdown("<h1 style='text-align: center;'>🛡️ EduTracer</h1>", unsafe_allow_html=True)
-role = st.sidebar.radio("SÉLECTIONNER ESPACE :", ["🎓 Portail Étudiant (Mobile)", "🔐 Administration Centrale"])
+st.sidebar.markdown("<h2 style='text-align: center;'>🛡️ EduTracer UPL</h2>", unsafe_allow_html=True)
+role = st.sidebar.radio("SÉLECTIONNER ESPACE :", ["🎓 Portail Étudiant", "🔐 Administration", "📊 Calculateur Bulletin"])
 
 # ---------------------------------------------------------
-# 1. ESPACE ÉTUDIANT (Optimisé pour Empreinte Smartphone)
+# 1. ESPACE ÉTUDIANT
 # ---------------------------------------------------------
-if role == "🎓 Portail Étudiant (Mobile)":
-    nav = st.sidebar.selectbox("SERVICES", ["☝️ Scanner Biométrique", "📊 Mes Résultats", "🗓️ Mon Historique"])
-
-    if nav == "☝️ Scanner Biométrique":
-        st.title("☝️ Authentification Biométrique")
-        st.write("Utilisez le capteur d'empreinte de votre appareil pour pointer.")
-        
-        c1, c2 = st.columns([1, 1])
-        
-        with c1:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.image("https://img.icons8.com/ios/150/58A6FF/fingerprint.png")
-            mat_in = st.text_input("Numéro Matricule", placeholder="Ex: 2025001").strip()
-        
-        with c2:
-            st.write("### État du Capteur")
-            if st.button("ACTIVER LE SCANNER (EMPREINTE)"):
-                if mat_in:
-                    df_e = pd.read_csv(DB_E)
-                    if mat_in in df_e['Matricule'].astype(str).values:
-                        with st.spinner("Vérification biométrique sur l'appareil..."):
-                            time.sleep(1.5) # Simulation du temps de scan sur téléphone
-                            
-                            df_p = pd.read_csv(DB_P)
-                            today = get_upl_time().strftime("%d/%m/%Y")
-                            now_time = get_upl_time().strftime("%H:%M")
-                            
-                            # Logique de double pointage
-                            row_idx = df_p[(df_p['Matricule'] == mat_in) & (df_p['Date'] == today)].index
-                            
-                            if len(row_idx) == 0:
-                                # Premier passage (Entrée)
-                                new_log = pd.DataFrame([{"Matricule": mat_in, "Date": today, "Pointage_1": now_time, "Pointage_2": None, "Statut": "Partiel"}])
-                                pd.concat([df_p, new_log]).to_csv(DB_P, index=False)
-                                st.success(f"✅ POINTAGE ENTRÉE RÉUSSI ({now_time})")
-                                st.toast("Données synchronisées avec le serveur UPL", icon='☁️')
-                            else:
-                                # Deuxième passage (Sortie)
-                                if pd.isna(df_p.loc[row_idx[0], 'Pointage_2']):
-                                    df_p.loc[row_idx[0], 'Pointage_2'] = now_time
-                                    df_p.loc[row_idx[0], 'Statut'] = "Présent"
-                                    df_p.to_csv(DB_P, index=False)
-                                    st.success(f"✅ POINTAGE SORTIE RÉUSSI ({now_time})")
-                                    st.balloons()
-                                else:
-                                    st.warning("⚠️ Présence déjà complète pour aujourd'hui.")
-                    else:
-                        st.error("❌ Matricule non reconnu dans la base.")
-                else:
-                    st.warning("Veuillez saisir votre matricule avant de scanner.")
-
-    elif nav == "📊 Mes Résultats":
-        st.title("📊 Calculateur de Performance")
+if role == "🎓 Portail Étudiant":
+    st.title("☝️ Pointage Biométrique")
+    
+    # ID simulé du capteur (Hardware ID)
+    finger_sim_id = "ID_BIO_LUBUM_001" 
+    
+    db_b = pd.read_csv(DB_B)
+    db_e = pd.read_csv(DB_E)
+    db_e['Matricule'] = db_e['Matricule'].astype(str)
+    
+    liaison = db_b[db_b['Finger_ID'] == finger_sim_id]
+    
+    if liaison.empty:
+        st.warning("🆕 Nouvelle empreinte. Liaison au matricule requise (Première fois).")
         with st.container():
-            st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-            nb = st.number_input("Nombre de matières", 1, 15, 5)
-            notes = [st.number_input(f"Note /20 - Cours {i+1}", 0, 20, 10, key=i) for i in range(nb)]
-            if st.button("GÉNÉRER MON BULLETIN"):
-                moy = (sum(notes) / (nb * 20)) * 100
-                st.write(f"## Votre Pourcentage : {round(moy, 2)}%")
-                if moy >= 50: st.success("Félicitations ! Vous avez réussi.")
-                else: st.error("Travaillez encore, vous êtes en dessous de 50%.")
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            mat_input = st.text_input("Saisissez votre Numéro Matricule :").strip()
+            if st.button("LIER MON EMPREINTE"):
+                if mat_input in db_e['Matricule'].values:
+                    new_link = pd.DataFrame([{"Matricule": mat_input, "Finger_ID": finger_sim_id}])
+                    pd.concat([db_b, new_link]).to_csv(DB_B, index=False)
+                    st.success("✅ Empreinte liée avec succès !")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Ce matricule n'est pas encore enregistré dans le système.")
             st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        mat_found = str(liaison.iloc[0]['Matricule'])
+        etudiant = db_e[db_e['Matricule'] == mat_found].iloc[0]
+        # Construction de l'identité avec les nouveaux noms de colonnes
+        nom_complet = f"{etudiant['Nom_Eleve']} {etudiant['Postnom_Eleve']} {etudiant['Prenom_Eleve']}"
+        
+        st.info(f"👤 Étudiant reconnu : **{nom_complet}** ({etudiant['Classe']})")
+        
+        if st.button("VALIDER PRÉSENCE (SCAN EMPREINTE)"):
+            with st.spinner("Analyse du doigt..."):
+                time.sleep(1)
+                today = get_upl_time().strftime("%d/%m/%Y")
+                now_t = get_upl_time().strftime("%H:%M")
+                db_p = pd.read_csv(DB_P)
+                
+                row_idx = db_p[(db_p['Matricule'] == mat_found) & (db_p['Date'] == today)].index
+                
+                if len(row_idx) == 0:
+                    # Premier pointage : Entrée
+                    new_log = pd.DataFrame([{
+                        "Matricule": mat_found, 
+                        "Identite_Complete": nom_complet, 
+                        "Date": today, 
+                        "Entree": now_t, 
+                        "Sortie": None, 
+                        "Statut": "Partiel"
+                    }])
+                    pd.concat([db_p, new_log]).to_csv(DB_P, index=False)
+                    st.success(f"✅ ENTRÉE ENREGISTRÉE : {now_t}")
+                else:
+                    # Deuxième pointage : Sortie
+                    if pd.isna(db_p.loc[row_idx[0], 'Sortie']):
+                        db_p.loc[row_idx[0], 'Sortie'] = now_t
+                        db_p.loc[row_idx[0], 'Statut'] = "Présent"
+                        db_p.to_csv(DB_P, index=False)
+                        st.success(f"✅ SORTIE ENREGISTRÉE : {now_t}")
+                        st.balloons()
+                    else:
+                        st.warning("⚠️ Vous avez déjà validé votre sortie pour aujourd'hui.")
 
 # ---------------------------------------------------------
-# 2. ESPACE ADMINISTRATION (Gestion Totale)
+# 2. ESPACE ADMINISTRATION (GESTION DES ÉLÈVES)
+# ---------------------------------------------------------
+elif role == "🔐 Administration":
+    st.title("🔐 Gestion de la Base de Données UPL")
+    
+    tab_list, tab_add, tab_pres = st.tabs(["👥 Liste des Élèves", "➕ Inscription Élève", "📋 Journal des Présences"])
+    
+    db_e = pd.read_csv(DB_E)
+    db_p = pd.read_csv(DB_P)
+
+    with tab_list:
+        st.write("### Étudiants inscrits (Format Google Sheets)")
+        st.dataframe(db_e, use_container_width=True)
+
+    with tab_add:
+        st.write("### Ajouter un nouvel étudiant à la base")
+        with st.form("ajout_eleve"):
+            c1, c2, c3 = st.columns(3)
+            new_mat = c1.text_input("Matricule Unique")
+            new_nom = c2.text_input("Nom_Eleve")
+            new_pos = c3.text_input("Postnom_Eleve")
+            new_pre = c1.text_input("Prenom_Eleve")
+            new_cla = c2.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA", "L1 INFO", "L2 INFO"])
+            
+            if st.form_submit_button("VALIDER L'INSCRIPTION"):
+                if new_mat and new_nom and new_pre:
+                    # Vérifier les doublons de matricule
+                    if new_mat in db_e['Matricule'].astype(str).values:
+                        st.error("Ce matricule est déjà utilisé !")
+                    else:
+                        new_data = pd.DataFrame([{
+                            "Matricule": new_mat, 
+                            "Nom_Eleve": new_nom.upper(), 
+                            "Postnom_Eleve": new_pos.upper(),
+                            "Prenom_Eleve": new_pre, 
+                            "Classe": new_cla
+                        }])
+                        pd.concat([db_e, new_data]).to_csv(DB_E, index=False)
+                        st.success(f"L'élève {new_nom} a été ajouté avec succès.")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.warning("Veuillez remplir au moins le Matricule, le Nom et le Prénom.")
+
+    with tab_pres:
+        st.write("### Rapport de présence en temps réel")
+        st.dataframe(db_p, use_container_width=True)
+        st.download_button("📥 Télécharger le rapport CSV", db_p.to_csv(index=False), "rapport_presences.csv")
+
+# ---------------------------------------------------------
+# 3. CALCULATEUR BULLETIN
 # ---------------------------------------------------------
 else:
-    st.title("🔐 Administration Centrale EduTracer")
-    
-    # Statistiques Globales
-    df_p = pd.read_csv(DB_P)
-    df_e = pd.read_csv(DB_E)
-    today = get_upl_time().strftime("%d/%m/%Y")
-    presences_today = df_p[df_p['Date'] == today]
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f"<div class='metric-card'><h5>Total Inscrits</h5><h2>{len(df_e)}</h2></div>", unsafe_allow_html=True)
-    m2.markdown(f"<div class='metric-card'><h5>Présents (Complets)</h5><h2>{len(presences_today[presences_today['Statut']=='Présent'])}</h2></div>", unsafe_allow_html=True)
-    m3.markdown(f"<div class='metric-card'><h5>En cours (Entrée seule)</h5><h2>{len(presences_today[presences_today['Statut']=='Partiel'])}</h2></div>", unsafe_allow_html=True)
-    absents = len(df_e) - len(presences_today)
-    m4.markdown(f"<div class='metric-card'><h5>Absents</h5><h2>{absents}</h2></div>", unsafe_allow_html=True)
-
-    tab1, tab2, tab3 = st.tabs(["📋 Registre Global", "👥 Gestion Étudiants", "📊 Analyses IA"])
-    
-    with tab1:
-        st.subheader("Fichier des Présences Journalières")
-        st.dataframe(df_p.sort_values(by=["Date", "Pointage_1"], ascending=False), use_container_width=True)
-        st.download_button("📥 Exporter le registre pour le Secrétariat", df_p.to_csv(index=False), "Rapport_UPL.csv")
-
-    with tab2:
-        st.subheader("Mise à jour de la Base de Données")
-        with st.expander("➕ Ajouter un nouvel étudiant"):
-            with st.form("new_st"):
-                c1, c2, c3 = st.columns(3)
-                m = c1.text_input("Matricule")
-                n = c2.text_input("Nom & Postnom")
-                p = c3.text_input("Prénom")
-                cl = st.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA", "L1 INFO", "L2 INFO"])
-                if st.form_submit_button("VALIDER INSCRIPTION"):
-                    if m and n:
-                        df_e = pd.read_csv(DB_E)
-                        new_row = pd.DataFrame([{"Matricule": m, "Nom": n.upper(), "Postnom": "", "Prenom": p, "Classe": cl}])
-                        pd.concat([df_e, new_row]).to_csv(DB_E, index=False)
-                        st.success("Étudiant ajouté avec succès !")
-                        st.rerun()
-        
-        st.dataframe(df_e, use_container_width=True)
-
-    with tab3:
-        st.subheader("Visualisation des données d'assiduité")
-        if not df_p.empty:
-            st.bar_chart(df_p['Classe'].value_counts())
-        else:
-            st.info("Aucune donnée d'analyse disponible pour le moment.")
+    st.title("📊 Calculateur de Moyenne")
+    n_mat = st.number_input("Nombre de cours", 1, 15, 5)
+    with st.form("calc"):
+        notes = [st.number_input(f"Cours {i+1} (/20)", 0, 20, 10) for i in range(n_mat)]
+        if st.form_submit_button("CALCULER POURCENTAGE"):
+            moyenne = (sum(notes) / (n_mat * 20)) * 100
+            st.metric("Résultat Final", f"{round(moyenne, 2)}%")
+            if moyenne >= 50: st.success("Réussite")
+            else: st.error("Échec")
