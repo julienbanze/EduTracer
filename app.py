@@ -1,122 +1,119 @@
 import streamlit as st
 import pandas as pd
-import smtplib
-from email.message import EmailMessage
+import qrcode
 from datetime import datetime
-import time
+from io import BytesIO
 
-# --- 1. CONFIGURATION DES SOURCES ---
-ID_SHEET = "1ROnvyK-h9I8mzAsfGjSRiQz8HLf5MppGVMCMt_vpiuM"
-# Onglet 'Eleves' (gid=0)
-URL_ELEVES = f"https://docs.google.com/spreadsheets/d/{ID_SHEET}/export?format=csv&gid=0"
+# --- CONFIGURATION ET STYLE ---
+st.set_page_config(page_title="EduTracer UPL Pro", layout="wide")
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #eee; border-radius: 4px; padding: 10px; }
+    .stTabs [aria-selected="true"] { background-color: #007bff; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="EduTracer UPL", layout="wide", page_icon="🎓")
+# Initialisation des bases de données en mémoire (Session)
+if 'db_presences' not in st.session_state: st.session_state.db_presences = []
+if 'db_resultats' not in st.session_state: st.session_state.db_resultats = []
 
-# --- 2. STOCKAGE TEMPORAIRE DES ACTIONS (SESSION) ---
-if 'histo_presences' not in st.session_state:
-    st.session_state.histo_presences = []
-if 'histo_resultats' not in st.session_state:
-    st.session_state.histo_resultats = []
-
-# --- 3. FONCTION ENVOI EMAIL (Code: ncjzdgdxnplcptjj) ---
-def envoyer_mail(email_dest, sujet, corps):
-    try:
-        msg = EmailMessage()
-        msg.set_content(corps)
-        msg['Subject'] = sujet
-        msg['From'] = "julienbanze.k@gmail.com"
-        msg['To'] = email_dest
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login("julienbanze.k@gmail.com", "ncjzdgdxnplcptjj") 
-            smtp.send_message(msg)
-        return True
-    except: return False
-
-# --- 4. CHARGEMENT DYNAMIQUE ---
-@st.cache_data(ttl=5)
-def charger_data():
-    try:
-        data = pd.read_csv(URL_ELEVES)
-        data.columns = data.columns.str.strip()
-        data['Identite'] = data['Nom_Eleve'].astype(str) + " " + data['Postnom_Eleve'].astype(str) + " " + data['Prenom_Eleve'].astype(str)
-        return data
-    except: return None
-
-df_base = charger_data()
-
-# --- 5. INTERFACE ---
+# --- NAVIGATION ---
 st.sidebar.title("💎 EDU-TRACER UPL")
-menu = st.sidebar.radio("Navigation :", ["📍 Pointage Présence", "📊 Onglet Présences", "📝 Onglet Résultats", "👥 Base Élèves"])
+role = st.sidebar.selectbox("Accès plateforme :", ["👨‍🎓 Borne de Pointage (Élève)", "⚙️ Panel Administration"])
 
-if df_base is None:
-    st.error("Impossible de charger le fichier Google Sheets. Vérifiez le lien.")
-else:
-    # --- PAGE : POINTAGE ---
-    if menu == "📍 Pointage Présence":
-        st.title("📸 Identification & Alerte Parent")
-        c1, c2 = st.columns([1.5, 1])
-        with c1:
-            st.camera_input("Scanner le visage")
-        with c2:
-            mat = st.text_input("Matricule :")
-            if st.button("VALIDER L'ENTRÉE", use_container_width=True):
-                res = df_base[df_base['Matricule'].astype(str) == str(mat)]
-                if not res.empty:
-                    el = res.iloc[0]
-                    now = datetime.now()
-                    # Archivage Présence
-                    st.session_state.histo_presences.append({
-                        "Matricule": mat, "Nom_Eleve": el['Nom_Eleve'], "PostNom_Eleve": el['Postnom_Eleve'],
-                        "Prenom_Eleve": el['Prenom_Eleve'], "Date": now.strftime("%d/%m/%Y"),
-                        "Heure": now.strftime("%H:%M"), "Statut": "Présent"
-                    })
-                    # Email
-                    envoyer_mail(el['Email_Parent'], "🔔 Présence UPL", f"{el['Identite']} est arrivé à l'UPL à {now.strftime('%H:%M')}.")
-                    st.success(f"✅ BIENVENU {el['Identite']}")
-                    time.sleep(2)
-                    st.rerun()
-
-    # --- PAGE : ONGLET PRÉSENCES ---
-    elif menu == "📊 Onglet Présences":
-        st.title("📝 Registre Journalier")
-        if st.session_state.histo_presences:
-            st.table(pd.DataFrame(st.session_state.histo_presences))
-        else: st.info("Aucune présence aujourd'hui.")
-
-    # --- PAGE : ONGLET RÉSULTATS (DYNAMIQUE) ---
-    elif menu == "📝 Onglet Résultats":
-        st.title("📊 Calculateur de Bulletin")
-        eleve_sel = st.selectbox("Sélectionner l'étudiant :", df_base['Identite'].tolist())
-        info_el = df_base[df_base['Identite'] == eleve_sel].iloc[0]
+# ---------------------------------------------------------
+# 1. INTERFACE DE POINTAGE (ÉLÈVE)
+# ---------------------------------------------------------
+if role == "👨‍🎓 Borne de Pointage (Élève)":
+    st.title("📲 Système de Pointage Biométrique / QR")
+    c1, c2 = st.columns([1.5, 1])
+    
+    with c1:
+        st.info("Utilisez la caméra pour le scan facial ou le code QR")
+        st.camera_input("Scanner")
         
-        with st.form("form_notes"):
-            col_a, col_b = st.columns(2)
-            math = col_a.number_input("Math /20", 0, 20, 10)
-            cours = col_b.number_input("Cours /20", 0, 20, 10)
-            cote = col_a.number_input("Cote /10", 0, 10, 5)
+    with c2:
+        st.subheader("Validation Manuelle")
+        mat = st.text_input("🔢 Entrez votre Matricule :")
+        if st.button("VALIDER L'ARRIVÉE", use_container_width=True):
+            now = datetime.now()
+            # Simulation d'enregistrement
+            st.session_state.db_presences.append({
+                "Matricule": mat, "Date": now.strftime("%d/%m/%Y"), 
+                "Heure": now.strftime("%H:%M"), "Statut": "Présent"
+            })
+            st.success(f"✅ Identifié ! Bienvenue à l'UPL.")
+
+# ---------------------------------------------------------
+# 2. PANEL ADMINISTRATION
+# ---------------------------------------------------------
+else:
+    st.title("⚙️ Gestion Administrative & Académique")
+    t1, t2, t3 = st.tabs(["🪪 Création de Cartes", "📊 Encodage Résultats", "📈 Suivi Global"])
+
+    # --- TAB 1 : CRÉATION DE CARTES ---
+    with t1:
+        st.subheader("🛠️ Générateur de Cartes Étudiant")
+        with st.form("new_card"):
+            c1, c2 = st.columns(2)
+            m = c1.text_input("Matricule")
+            n = c2.text_input("Nom")
+            pn = c1.text_input("Postnom")
+            pr = c2.text_input("Prénom")
+            cl = st.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA", "L1 INFO"])
             
-            if st.form_submit_button("CALCULER & ENREGISTRER"):
-                total = math + cours + cote
-                pourcent = (total / 50) * 100
+            if st.form_submit_button("Générer la Carte & QR"):
+                # Génération QR
+                data_qr = f"UPL-{m}-{n}"
+                qr = qrcode.make(data_qr)
+                buf = BytesIO()
+                qr.save(buf, format="PNG")
                 
-                # Archivage Résultat avec TES colonnes
-                st.session_state.histo_resultats.append({
-                    "Matricule": info_el['Matricule'], "Nom_Eleve": info_el['Nom_Eleve'],
-                    "PostNom_Eleve": info_el['Postnom_Eleve'], "Prenom_Eleve": info_el['Prenom_Eleve'],
-                    "Math": math, "Cours": cours, "Cote": cote, "Total": total, "Pourcentage": f"{pourcent}%"
+                st.divider()
+                col_a, col_b = st.columns([1, 2])
+                col_a.image(buf, width=150)
+                col_b.write(f"**CARTE GÉNÉRÉE**\n\n**Étudiant :** {n} {pn} {pr}\n\n**Matricule :** {m}\n\n**Classe :** {cl}")
+
+    # --- TAB 2 : RÉSULTATS (COURS INTÉGRÉ) ---
+    with t2:
+        st.subheader("📊 Saisie des Notes par Cours")
+        with st.form("form_notes"):
+            c1, c2 = st.columns(2)
+            mat_res = c1.text_input("Matricule de l'élève")
+            nom_cours = c2.text_input("Nom du Cours (ex: Algorithmique)")
+            
+            c3, c4 = st.columns(2)
+            note = c3.number_input("Note obtenue", 0.0, 100.0, 10.0)
+            max_note = c4.number_input("Sur combien (Max)", 10, 100, 20)
+            
+            if st.form_submit_button("Calculer & Enregistrer le Bulletin"):
+                pourcent = (note / max_note) * 100
+                # Stockage dans l'onglet Résultats
+                st.session_state.db_resultats.append({
+                    "Matricule": mat_res,
+                    "Cours": nom_cours,
+                    "Cote": note,
+                    "Total": max_note,
+                    "Pourcentage": f"{pourcent}%"
                 })
-                
-                # Email Parent
-                corps_res = f"Résultats de {eleve_sel} :\nTotal: {total}/50\nPourcentage: {pourcent}%"
-                envoyer_mail(info_el['Email_Parent'], "📊 Bulletin Numérique", corps_res)
-                st.success(f"Bulletin de {eleve_sel} envoyé au parent !")
+                st.success(f"✅ Résultat enregistré : {pourcent}% en {nom_cours}")
 
-        if st.session_state.histo_resultats:
-            st.divider()
-            st.subheader("Tableau des Résultats Générés")
-            st.dataframe(pd.DataFrame(st.session_state.histo_resultats))
-
-    # --- PAGE : BASE ÉLÈVES ---
-    elif menu == "👥 Base Élèves":
-        st.title("📑 Liste des Inscrits")
-        st.dataframe(df_base[['Matricule', 'Nom_Eleve', 'Postnom_Eleve', 'Prenom_Eleve', 'Classe', 'Email_Parent']], use_container_width=True)
+    # --- TAB 3 : SUIVI GLOBAL (PAR CLASSE) ---
+    with t3:
+        st.subheader("📈 Visualisation des Données")
+        classe_view = st.selectbox("Sélectionner la classe à auditer :", ["Bac 1 IA", "Bac 2 IA"])
+        
+        col_p, col_r = st.columns(2)
+        with col_p:
+            st.write("📖 **Registre des Présences**")
+            if st.session_state.db_presences:
+                st.dataframe(pd.DataFrame(st.session_state.db_presences))
+            else: st.info("Aucun scan aujourd'hui.")
+            
+        with col_r:
+            st.write("📊 **Registre des Résultats**")
+            if st.session_state.db_resultats:
+                st.dataframe(pd.DataFrame(st.session_state.db_resultats))
+            else: st.info("Aucune note encodée.")
