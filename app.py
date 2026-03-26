@@ -1,108 +1,102 @@
 import streamlit as st
 import pandas as pd
 import qrcode
-import cv2
-import numpy as np
 from datetime import datetime
 from io import BytesIO
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import os
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="EduTracer UPL Pro", layout="wide")
+# --- CONFIGURATION DU DESIGN ---
+st.set_page_config(page_title="UPL EduTracer", layout="centered")
 
-# Simulation de base de données locale (CSV)
+# CSS pour cacher les éléments inutiles et faire un design pro
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div.block-container { padding-top: 2rem; }
+    .stButton>button { background: linear-gradient(135deg, #004e92, #000428); color: white; border-radius: 10px; border: none; }
+    .card { background: #1e1e1e; padding: 15px; border-radius: 10px; border-left: 5px solid #004e92; margin-bottom: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- BASE DE DONNÉES ---
 FICHIER = "registre_upl.csv"
-if 'db' not in st.session_state:
-    if not hasattr(st, "db_loaded"):
-        try:
-            st.session_state.db = pd.read_csv(FICHIER)
-        except:
-            st.session_state.db = pd.DataFrame(columns=['Matricule', 'Nom_Complet', 'Classe', 'Date', 'Heure'])
-        st.db_loaded = True
 
-# --- LOGIQUE DE SCAN QR ---
-class QRScanner(VideoTransformerBase):
-    def __init__(self):
-        self.detector = cv2.QRCodeDetector()
+def enregistrer_scan(data):
+    try:
+        # Format attendu dans le QR : Matricule|Nom|Classe
+        infos = data.split("|")
+        df = pd.read_csv(FICHIER) if os.path.exists(FICHIER) else pd.DataFrame(columns=['Matricule', 'Nom', 'Classe', 'Date', 'Heure'])
+        nouvelle_ligne = pd.DataFrame([{
+            'Matricule': infos[0], 'Nom': infos[1], 'Classe': infos[2],
+            'Date': datetime.now().strftime("%d/%m/%Y"),
+            'Heure': datetime.now().strftime("%H:%M:%S")
+        }])
+        pd.concat([df, nouvelle_ligne], ignore_index=True).to_csv(FICHIER, index=False)
+        return infos
+    except:
+        return None
 
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        data, bbox, _ = self.detector.detectAndDecode(img)
-        if data:
-            st.session_state.last_qr = data
-        return img
-
-# --- INTERFACE ADMIN (Accès par mot de passe ou paramètre) ---
-# On utilise un bouton simple pour la démo si l'URL ne passe pas
-is_admin = st.sidebar.checkbox("Accès Administrateur (Julien)")
+# --- LE FIX DE L'URL (NOUVELLE MÉTHODE) ---
+# Accès via : https://ton-app.streamlit.app/?admin=julien
+admin_param = st.query_params.get("admin")
+is_admin = admin_param == "julien"
 
 # ---------------------------------------------------------
-# INTERFACE ÉLÈVE : SCANNER QR TEMPS RÉEL
+# INTERFACE ÉLÈVE (PAR DÉFAUT)
 # ---------------------------------------------------------
 if not is_admin:
-    st.title("🛡️ UPL - Scanner de Présence")
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        st.subheader("📷 Placez votre carte ici")
-        webrtc_streamer(key="scanner", video_transformer_factory=QRScanner)
-        
-    with col2:
-        st.subheader("📄 Résultat du Scan")
-        if "last_qr" in st.session_state:
-            try:
-                # Format attendu : Matricule|Nom|Postnom|Prenom|Classe
-                d = st.session_state.last_qr.split("|")
-                mat, nom, pnom, pren, cl = d[0], d[1], d[2], d[3], d[4]
-                nom_c = f"{nom} {pnom} {pren}"
-                
-                st.success(f"✅ Identifié : {nom_c}")
-                st.write(f"**Classe :** {cl}")
-                
-                # Enregistrement
-                now = datetime.now()
-                new_data = pd.DataFrame([[mat, nom_c, cl, now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S")]], 
-                                        columns=st.session_state.db.columns)
-                st.session_state.db = pd.concat([st.session_state.db, new_data], ignore_index=True)
-                st.session_state.db.to_csv(FICHIER, index=False)
-                st.balloons()
-                del st.session_state.last_qr # Reset pour le prochain
-            except:
-                st.error("QR Code non valide ou mal formaté.")
+    st.markdown("<h2 style='text-align: center;'>🛡️ UPL - Scanner</h2>", unsafe_allow_html=True)
+    
+    # Zone de Scan (Photo pour éviter le bug du lecteur vidéo)
+    st.markdown("<div class='card'>📷 <b>Placez votre carte QR</b></div>", unsafe_allow_html=True)
+    img = st.camera_input("Scanner", label_visibility="collapsed")
+    
+    # Résultat du Scan
+    st.markdown("### 📄 Résultat")
+    # Champ de détection (Automatisé par ton futur script de lecture)
+    qr_data = st.text_input("Contenu détecté :", placeholder="Matricule|Nom|Classe")
+    
+    if qr_data:
+        res = enregistrer_scan(qr_data)
+        if res:
+            st.success(f"Bienvenue, {res[1]} !")
+            st.markdown(f"""
+            <div class='card' style='border-left-color: #28a745;'>
+                <b>{res[1]}</b><br>
+                {res[2]} - {res[0]}<br>
+                <small>Enregistré à {datetime.now().strftime('%H:%M')}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            st.balloons()
+        else:
+            st.error("Format QR invalide")
 
 # ---------------------------------------------------------
-# INTERFACE ADMIN : GÉNÉRATEUR & SUIVI
+# INTERFACE ADMIN (CACHÉE)
 # ---------------------------------------------------------
 else:
-    st.title("⚙️ Gestion Administrative - Julien")
-    tab1, tab2 = st.tabs(["🪪 Générer Carte", "📊 Suivi Présences"])
-
-    with tab1:
-        with st.form("carte"):
-            c1, c2 = st.columns(2)
-            m = c1.text_input("Matricule")
-            n = c2.text_input("Nom")
-            pn = c1.text_input("Postnom")
-            pr = c2.text_input("Prénom")
-            cl = st.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA", "L1 INFO"])
-            if st.form_submit_button("Générer la Carte Complète"):
-                # QR Data : On met TOUT dedans pour que le scanner lise tout
-                qr_data = f"{m}|{n}|{pn}|{pr}|{cl}"
-                img_qr = qrcode.make(qr_data)
-                
-                # Affichage de la carte
-                st.markdown(f"""
-                <div style="border:2px solid #000; padding:15px; border-radius:10px; background:#fff; width:350px;">
-                    <h3 style="color:#004e92; text-align:center;">UPL - CARTE ÉLÈVE</h3>
-                    <p><b>Nom :</b> {n.upper()}</p>
-                    <p><b>Postnom :</b> {pn.upper()}</p>
-                    <p><b>Prénom :</b> {pr.title()}</p>
-                    <p><b>Classe :</b> {cl}</p>
-                    <p><b>Matricule :</b> {m}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                st.image(img_qr.get_image(), width=150)
-
-    with tab2:
-        st.subheader("Liste des présences")
-        st.dataframe(st.session_state.db, use_container_width=True)
+    st.sidebar.title("💎 Session Admin")
+    page = st.sidebar.radio("Menu", ["📊 Présences", "🪪 Créer Carte"])
+    
+    if page == "📊 Présences":
+        st.title("📋 Registre UPL")
+        if os.path.exists(FICHIER):
+            df_admin = pd.read_csv(FICHIER)
+            st.dataframe(df_admin, use_container_width=True)
+            st.download_button("Télécharger CSV", df_admin.to_csv(index=False), "registre.csv")
+        else:
+            st.info("Aucune présence.")
+            
+    elif page == "🪪 Créer Carte":
+        st.title("Générateur QR")
+        with st.form("gen"):
+            m = st.text_input("Matricule")
+            n = st.text_input("Nom Complet")
+            c = st.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA"])
+            if st.form_submit_button("Générer"):
+                data = f"{m}|{n}|{c}"
+                qr = qrcode.make(data)
+                buf = BytesIO()
+                qr.save(buf, format="PNG")
+                st.image(buf, width=200)
+                st.code(data) # Pour copier-coller dans le test de scan
