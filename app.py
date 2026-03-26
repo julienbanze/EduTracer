@@ -13,8 +13,8 @@ from io import BytesIO
 ID_SHEET = "1ROnvyK-h9I8mzAsfGjSRiQz8HLf5MppGVMCMt_vpiuM"
 GID_ELEVES = "0" 
 # Remplace les chiffres ci-dessous par ceux de ton navigateur (ex: gid=12345)
-GID_PRESENCES = "TON_GID_PRESENCES" 
-GID_RESULTATS = "TON_GID_RESULTATS"
+GID_PRESENCES = "1157441981" 
+GID_RESULTATS = "408627258"
 
 URL_BASE = f"https://docs.google.com/spreadsheets/d/{ID_SHEET}/export?format=csv"
 URL_ELEVES = f"{URL_BASE}&gid={GID_ELEVES}"
