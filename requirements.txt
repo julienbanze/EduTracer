@@ -2,6 +2,3 @@ streamlit
 pandas
 qrcode
 Pillow
-streamlit-webrtc
-av
-opencv-python-headless
