@@ -1,6 +1,7 @@
 streamlit
-pandas
-st-gsheets-connection
+supabase
+postgrest
+gotrue
 qrcode
-Pillow
-matplotlib
+pillow
+python-dotenv
