@@ -1,151 +1,143 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-import os
+from supabase import create_client, Client
 import time
 
-# --- CONFIGURATION LUBUMBASHI (UTC+2) ---
-st.set_page_config(page_title="EduTracer UPL - Correction Matricule", layout="wide", page_icon="☝️")
+# --- 1. CONFIGURATION SUPABASE ---
+# Remplace par tes vraies clés de ton projet Supabase
+URL_SUPABASE = "https://tqlrzrbskptsnazawycq.supabase.co"
+CLE_SUPABASE = "sb_publishable_LMk35Kkv_gZVGwpkX-aHPA_H1XxRHKp"
+supabase: Client = create_client(URL_SUPABASE, CLE_SUPABASE)
 
-def get_upl_time():
-    """Récupère l'heure exacte de Lubumbashi"""
-    return datetime.utcnow() + timedelta(hours=2)
+# --- 2. CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="EduTracer Biometric Pro", layout="wide")
 
-# --- INITIALISATION DES BASES DE DONNÉES ---
-DB_E = "base_etudiants.csv"        
-DB_P = "registre_presences.csv"     
-DB_B = "liaison_biometrique.csv"    
+# Initialisation des états de session
+if "role" not in st.session_state:
+    st.session_state.role = "Public"
+if "authenticated_user" not in st.session_state:
+    st.session_state.authenticated_user = None
 
-def init_db():
-    if not os.path.exists(DB_E):
-        pd.DataFrame(columns=["Matricule", "Nom_Eleve", "Postnom_Eleve", "Prenom_Eleve", "Classe"]).to_csv(DB_E, index=False)
-    
-    if not os.path.exists(DB_P):
-        pd.DataFrame(columns=["Matricule", "Identite_Complete", "Date", "Entree", "Sortie", "Statut"]).to_csv(DB_P, index=False)
-    
-    if not os.path.exists(DB_B):
-        pd.DataFrame(columns=["Matricule", "Finger_ID"]).to_csv(DB_B, index=False)
+# --- 3. CODES D'ACCÈS AGENTS ---
+CODES_ACCES = {
+    "Scanner": "1111",
+    "Finance": "3333",
+}
 
-init_db()
+# --- 4. NAVIGATION LATERALE ---
+st.sidebar.title("🏢 EduTracer UPL")
+if st.session_state.role != "Public":
+    if st.sidebar.button("🔴 Déconnexion"):
+        st.session_state.role = "Public"
+        st.rerun()
 
-# --- DESIGN ET STYLE ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #0D1117; color: #C9D1D9; }
-    .stButton>button { 
-        background: linear-gradient(90deg, #238636 0%, #2ea043 100%); 
-        color: white; border-radius: 12px; font-weight: bold; height: 3.5em; width: 100%;
-    }
-    .card { 
-        background: #161B22; border: 1px solid #30363D; 
-        padding: 25px; border-radius: 15px; text-align: center;
-    }
-    h1, h2, h3 { color: #58A6FF !important; }
-    </style>
-    """, unsafe_allow_html=True)
+# Logique Admin cachée via URL (?admin=julien)
+query_params = st.query_params
+if query_params.get("admin") == "julien":
+    st.sidebar.success("👑 Mode Propriétaire Détecté")
+    if st.sidebar.button("Accéder à l'Administration"):
+        st.session_state.role = "Admin"
 
-# --- NAVIGATION ---
-st.sidebar.markdown("<h2 style='text-align: center;'>🛡️ EduTracer UPL</h2>", unsafe_allow_html=True)
-role = st.sidebar.radio("SÉLECTIONNER ESPACE :", ["🎓 Portail Étudiant", "🔐 Administration", "📊 Calculateur Bulletin"])
+# --- 5. LOGIQUE DES MODULES ---
 
-# ---------------------------------------------------------
-# 1. ESPACE ÉTUDIANT
-# ---------------------------------------------------------
-if role == "🎓 Portail Étudiant":
-    st.title("☝️ Pointage Biométrique")
+# --- A. ACCUEIL (PUBLIC) ---
+if st.session_state.role == "Public":
+    st.title("🚀 Portail Scolaire Biométrique")
+    col1, col2 = st.columns(2)
     
-    finger_sim_id = "ID_BIO_LUBUM_001" 
-    
-    db_b = pd.read_csv(DB_B)
-    db_e = pd.read_csv(DB_E)
-    
-    # --- CORRECTION CRITIQUE ICI ---
-    # On force tous les matricules de la base en TEXTE et on enlève les espaces
-    db_e['Matricule'] = db_e['Matricule'].astype(str).str.strip()
-    db_b['Matricule'] = db_b['Matricule'].astype(str).str.strip()
-    
-    liaison = db_b[db_b['Finger_ID'] == finger_sim_id]
-    
-    if liaison.empty:
-        st.warning("🆕 Nouvelle empreinte détectée.")
-        with st.container():
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            mat_input = st.text_input("Saisissez votre Numéro Matricule :").strip()
-            
-            if st.button("LIER MON EMPREINTE"):
-                # On compare le texte saisi avec le texte de la base
-                if mat_input in db_e['Matricule'].values:
-                    new_link = pd.DataFrame([{"Matricule": mat_input, "Finger_ID": finger_sim_id}])
-                    pd.concat([db_b, new_link]).to_csv(DB_B, index=False)
-                    st.success("✅ Empreinte liée avec succès !")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error(f"❌ Le matricule '{mat_input}' n'est pas dans la liste des {len(db_e)} inscrits.")
-                    st.info("💡 Vérifiez l'onglet Administration pour voir si l'élève est bien inscrit.")
-            st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        mat_found = str(liaison.iloc[0]['Matricule'])
-        etudiant = db_e[db_e['Matricule'] == mat_found].iloc[0]
-        nom_complet = f"{etudiant['Nom_Eleve']} {etudiant['Postnom_Eleve']} {etudiant['Prenom_Eleve']}"
-        
-        st.info(f"👤 Reconnu : **{nom_complet}**")
-        
-        if st.button("VALIDER PRÉSENCE (SCAN)"):
-            with st.spinner("Analyse..."):
-                time.sleep(1)
-                today = get_upl_time().strftime("%d/%m/%Y")
-                now_t = get_upl_time().strftime("%H:%M")
-                db_p = pd.read_csv(DB_P)
-                
-                row_idx = db_p[(db_p['Matricule'].astype(str) == mat_found) & (db_p['Date'] == today)].index
-                
-                if len(row_idx) == 0:
-                    new_log = pd.DataFrame([{"Matricule": mat_found, "Identite_Complete": nom_complet, "Date": today, "Entree": now_t, "Sortie": None, "Statut": "Partiel"}])
-                    pd.concat([db_p, new_log]).to_csv(DB_P, index=False)
-                    st.success(f"✅ ENTRÉE : {now_t}")
-                else:
-                    if pd.isna(db_p.loc[row_idx[0], 'Sortie']):
-                        db_p.loc[row_idx[0], 'Sortie'] = now_t
-                        db_p.loc[row_idx[0], 'Statut'] = "Présent"
-                        db_p.to_csv(DB_P, index=False)
-                        st.success(f"✅ SORTIE : {now_t}")
-                        st.balloons()
-
-# ---------------------------------------------------------
-# 2. ESPACE ADMINISTRATION
-# ---------------------------------------------------------
-elif role == "🔐 Administration":
-    st.title("🔐 Gestion UPL")
-    tab_list, tab_add = st.tabs(["👥 Liste", "➕ Ajouter"])
-    
-    db_e = pd.read_csv(DB_E)
-    
-    with tab_list:
-        st.dataframe(db_e, use_container_width=True)
-        if st.button("Vider toute la liste (Reset)"):
-            pd.DataFrame(columns=["Matricule", "Nom_Eleve", "Postnom_Eleve", "Prenom_Eleve", "Classe"]).to_csv(DB_E, index=False)
+    with col1:
+        st.info("📖 **Espace Élève**")
+        if st.button("Consulter mon Taux de Présence"):
+            st.session_state.role = "Eleve"
             st.rerun()
 
-    with tab_add:
-        with st.form("add"):
-            m = st.text_input("Matricule")
-            n = st.text_input("Nom_Eleve")
-            p = st.text_input("Postnom_Eleve")
-            pr = st.text_input("Prenom_Eleve")
-            cl = st.selectbox("Classe", ["Bac 1 IA", "Bac 2 IA"])
-            if st.form_submit_button("Inscrire"):
-                new_row = pd.DataFrame([{"Matricule": str(m).strip(), "Nom_Eleve": n.upper(), "Postnom_Eleve": p.upper(), "Prenom_Eleve": pr, "Classe": cl}])
-                pd.concat([db_e, new_row]).to_csv(DB_E, index=False)
-                st.success("Ajouté !")
+    with col2:
+        st.warning("🔐 **Espace Personnel**")
+        tache = st.selectbox("Mission :", ["Scanner (Pointage)", "Finance (Paiements)"])
+        code = st.text_input("Code d'accès :", type="password")
+        if st.button("Ouvrir la session"):
+            if tache == "Scanner (Pointage)" and code == CODES_ACCES["Scanner"]:
+                st.session_state.role = "Agent_Scanner"
                 st.rerun()
+            elif tache == "Finance (Paiements)" and code == CODES_ACCES["Finance"]:
+                st.session_state.role = "Agent_Finance"
+                st.rerun()
+            else:
+                st.error("Accès refusé.")
 
-# ---------------------------------------------------------
-# 3. CALCULATEUR BULLETIN
-# ---------------------------------------------------------
-else:
-    st.title("📊 Calculateur")
-    n = st.number_input("Nombre de cours", 1, 10, 5)
-    notes = [st.number_input(f"Cours {i+1}", 0, 20, 10) for i in range(n)]
-    if st.button("Calculer"):
-        st.write(f"## Moyenne : {(sum(notes)/(n*20))*100}%")
+# --- B. MODULE ADMIN (ENRÔLEMENT BIOMÉTRIQUE) ---
+elif st.session_state.role == "Admin":
+    st.title("⚙️ Panneau de Contrôle Admin")
+    tab1, tab2 = st.tabs(["Nouvel Enrôlement", "Gestion des Classes"])
+    
+    with tab1:
+        st.subheader("Enregistrer un nouvel élève et son empreinte")
+        res_classes = supabase.table("classes").select("nom_classe").execute()
+        liste_cl = [c['nom_classe'] for c in res_classes.data]
+        
+        with st.form("enrolement_form"):
+            mat = st.text_input("Matricule Unique")
+            nom = st.text_input("Nom & Postnom")
+            cl = st.selectbox("Classe", liste_cl)
+            st.write("---")
+            st.info("Le capteur d'empreinte s'activera après validation.")
+            
+            if st.form_submit_button("Valider & Lier l'Empreinte"):
+                # Simulation de l'appel au capteur du téléphone/PC
+                # En mode réel : on utilise une API JS WebAuthn ici
+                biometric_id = f"BIO_SIG_{mat}_{int(time.time())}" 
+                
+                try:
+                    supabase.table("eleves").insert({
+                        "matricule": mat, "nom": nom, 
+                        "classe_id": cl, "empreinte_id": biometric_id
+                    }).execute()
+                    st.success(f"✅ Élève {nom} enregistré avec l'empreinte {biometric_id}")
+                except:
+                    st.error("Erreur : Matricule déjà existant.")
+
+# --- C. MODULE SCANNER (POINTAGE QUOTIDIEN) ---
+elif st.session_state.role == "Agent_Scanner":
+    st.title("🖐️ Pointage par Empreinte Digitale")
+    st.write("Posez votre doigt sur le capteur pour valider votre présence.")
+    
+    if st.button("🔥 DÉMARRER LE SCAN BIOMÉTRIQUE"):
+        with st.spinner("Lecture de l'empreinte..."):
+            time.sleep(2) # Simulation du temps de lecture
+            
+            # Simulation d'une empreinte reconnue (ID qui viendrait du capteur)
+            test_bio_id = "BIO_SIG_2026-UPL-001" 
+            
+            # Vérification dans Supabase
+            res = supabase.table("eleves").select("*").eq("empreinte_id", test_bio_id).execute()
+            
+            if res.data:
+                user = res.data[0]
+                # Vérifier si en règle de paiement
+                if user['est_en_regle']:
+                    st.success(f"✅ PRÉSENCE VALIDÉE : {user['nom']} ({user['classe_id']})")
+                    # Enregistrement dans la table des présences
+                    supabase.table("presences").insert({
+                        "eleve_matricule": user['matricule'],
+                        "session_type": "Matin"
+                    }).execute()
+                else:
+                    st.error(f"⚠️ {user['nom']}, vous n'êtes pas en règle de paiement. Direction Finance.")
+            else:
+                st.error("❌ Empreinte Inconnue. Veuillez voir l'Admin.")
+
+# --- D. MODULE ÉLÈVE (CONSULTATION) ---
+elif st.session_state.role == "Eleve":
+    st.title("📊 Mon Suivi Scolaire")
+    m_check = st.text_input("Entrez votre matricule :")
+    if m_check:
+        res = supabase.table("eleves").select("*").eq("matricule", m_check).execute()
+        if res.data:
+            u = res.data[0]
+            st.write(f"Bonjour **{u['nom']}**, voici votre état :")
+            st.metric("Statut Financier", "EN RÈGLE" if u['est_en_regle'] else "NON RÉGLÉ")
+            
+            # Récupérer le nombre de présences
+            p = supabase.table("presences").select("*", count="exact").eq("eleve_matricule", m_check).execute()
+            st.metric("Nombre de présences ce mois", p.count)
+        else:
+            st.warning("Matricule non trouvé.")
